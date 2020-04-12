@@ -29,6 +29,7 @@ WateringPeriod wateringPeriods[] = {
   {6, 0, 6, 15},
   {18, 0, 18, 15},
   {19, 0, 19, 15},
+  {19, 55, 20, 00},
   {21, 0, 21, 5},
   {21, 45, 21, 50},
   {22, 0, 22, 5}
@@ -146,27 +147,38 @@ boolean DebouncedButton_getTransition(const DebouncedButton& button) {
   return button.transition;
 }
 
-unsigned int timeInSeconds(const TimeFromRtc& time) {
-  return time.hour * 3600 + time.minute * 60 + time.second;
+#define TIME_IN_SECS(hour, minute, second) ((unsigned long)hour * 3600 + (unsigned long)minute * 60 + (unsigned long)second)
+
+unsigned long timeInSeconds(const TimeFromRtc& time) {
+  return TIME_IN_SECS(time.hour, time.minute, time.second);
 }
 
 void isWateringPeriod(boolean& watering, 
                       const TimeFromRtc& currentTime,
                       const WateringPeriod wateringPeriods[], 
                       const size_t numWateringPeriods, 
-                      unsigned int& remainingTime) {
+                      unsigned long& remainingTime) {
   watering = false;
-  unsigned int currentTimeSecs = timeInSeconds(currentTime);
+  unsigned long currentTimeSecs = timeInSeconds(currentTime);
   int closestWateringPeriod = 0;
   unsigned int closestDifference = 24*3600; // maximum value of 24 hours
   for (int i = 0; i < numWateringPeriods; i++) {
-    unsigned int wateringPeriodStartSecs = wateringPeriods[i].startHour * 3600 + wateringPeriods[i].startMinute * 60;
-    unsigned int wateringPeriodEndSecs = wateringPeriods[i].endHour * 3600 + wateringPeriods[i].endMinute * 60;
+    unsigned long wateringPeriodStartSecs = TIME_IN_SECS(wateringPeriods[i].startHour, wateringPeriods[i].startMinute, 0);
+    unsigned long wateringPeriodEndSecs = TIME_IN_SECS(wateringPeriods[i].endHour, wateringPeriods[i].endMinute, 0);
     if ( currentTimeSecs >= wateringPeriodStartSecs && currentTimeSecs < wateringPeriodEndSecs ) {
       watering = true;
-      remainingTime = wateringPeriodEndSecs - wateringPeriodEndSecs;
+      remainingTime = wateringPeriodEndSecs - currentTimeSecs;
+      return;
+    } else {
+      // Figure out the next watering perdiod
+      if ( wateringPeriodStartSecs > currentTimeSecs && ((wateringPeriodStartSecs - currentTimeSecs) < closestDifference ))
+      {
+        closestDifference = wateringPeriodStartSecs - currentTimeSecs;
+        closestWateringPeriod = i;
+      }
     }
   }
+  remainingTime = TIME_IN_SECS(wateringPeriods[closestWateringPeriod].startHour, wateringPeriods[closestWateringPeriod].startMinute, 0);
 }
 
 void writeState( boolean watering ) {
@@ -177,7 +189,7 @@ void writeState( boolean watering ) {
   }
 }
 
-void displayTime(byte hours, byte minutes, byte seconds) {
+void displayTime(unsigned int hours, unsigned int minutes, unsigned int seconds) {
   if (hours < 10 ) display.print(0);
   display.print(hours);
   display.print(":");
@@ -188,7 +200,7 @@ void displayTime(byte hours, byte minutes, byte seconds) {
   display.print(seconds);
 }
 
-void displayState(const Adafruit_SSD1306& display, const TimeFromRtc& currentTime, boolean watering, unsigned int remainingTimeSecs) {
+void displayState(const Adafruit_SSD1306& display, const TimeFromRtc& currentTime, boolean watering, unsigned long remainingTimeSecs) {
   display.clearDisplay();
   display.setTextSize(2);
   display.setTextColor(WHITE);
@@ -206,15 +218,15 @@ void displayState(const Adafruit_SSD1306& display, const TimeFromRtc& currentTim
   }
 
   display.setCursor(0, 34);
-  byte remainingHours = remainingTimeSecs / 3600;
-  byte remainingMinutes = (remainingTimeSecs - remainingHours * 3600) / 60;
-  byte remainingSeconds = (remainingTimeSecs - remainingHours * 3600 - remainingMinutes * 60);
+  //display.print(remainingTimeSecs);
+  unsigned long remainingHours = remainingTimeSecs / 3600;
+  unsigned long remainingMinutes = ((remainingTimeSecs - remainingHours * 3600) / 60);
+  unsigned long remainingSeconds = ((remainingTimeSecs - remainingHours * 3600 - remainingMinutes * 60));
   displayTime( remainingHours, remainingMinutes, remainingSeconds);
-
   display.display();
 }
 
-void isAdHocWatering(boolean& isWateringPeriod, const DebouncedButton& button, unsigned int& wateringTime, const TimeFromRtc& currentTime, unsigned int& remainingTime) {
+void isAdHocWatering(boolean& isWateringPeriod, const DebouncedButton& button, unsigned int& wateringTime, const TimeFromRtc& currentTime, unsigned long& remainingTime) {
   unsigned int currentTimeSecs = timeInSeconds(currentTime);
   if ( DebouncedButton_getTransition(button) == true && DebouncedButton_getState(button) == HIGH ) {
     if ( wateringTime == 0 ) {
@@ -238,8 +250,8 @@ void loop() {
   TimeFromRtc currentTime = {};
   boolean wateringPeriod = false;
   boolean adHocWatering = false;
-  unsigned int remainingTime = 0;
-  unsigned int adHocRemainingTime = 0;
+  unsigned long remainingTime = 0;
+  unsigned long adHocRemainingTime = 0;
 
   // Read all inputs
   DebouncedButton_read(startWateringButton);
@@ -251,5 +263,5 @@ void loop() {
 
   // Write all outputs
   writeState(wateringPeriod || adHocWatering);
-  displayState(display, currentTime, wateringPeriod || adHocWatering, adHocRemainingTime > remainingTime ? adHocRemainingTime : remainingTime);
+  displayState(display, currentTime, wateringPeriod || adHocWatering, adHocWatering ? adHocRemainingTime : remainingTime);
 }
