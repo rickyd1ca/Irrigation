@@ -30,6 +30,7 @@ WateringPeriod wateringPeriods[] = {
   {18, 0, 18, 15},
   {19, 0, 19, 15},
   {19, 55, 20, 00},
+  {20, 50, 20, 52},
   {21, 0, 21, 5},
   {21, 45, 21, 50},
   {22, 0, 22, 5}
@@ -37,7 +38,7 @@ WateringPeriod wateringPeriods[] = {
 
 
 #define AD_HOC_WATERING_PERIOD 300 // 5 minutes of ad-hoc watering
-unsigned int adHocWateringEndTime = 0;
+unsigned long adHocWateringEndTime = 0;
 
 struct TimeFromRtc {
   byte second;
@@ -161,7 +162,7 @@ void isWateringPeriod(boolean& watering,
   watering = false;
   unsigned long currentTimeSecs = timeInSeconds(currentTime);
   int closestWateringPeriod = 0;
-  unsigned int closestDifference = 24*3600; // maximum value of 24 hours
+  unsigned long closestDifference = 86400UL; // maximum value of 24 hours
   for (int i = 0; i < numWateringPeriods; i++) {
     unsigned long wateringPeriodStartSecs = TIME_IN_SECS(wateringPeriods[i].startHour, wateringPeriods[i].startMinute, 0);
     unsigned long wateringPeriodEndSecs = TIME_IN_SECS(wateringPeriods[i].endHour, wateringPeriods[i].endMinute, 0);
@@ -226,14 +227,18 @@ void displayState(const Adafruit_SSD1306& display, const TimeFromRtc& currentTim
   display.display();
 }
 
-void isAdHocWatering(boolean& isWateringPeriod, const DebouncedButton& button, unsigned int& wateringTime, const TimeFromRtc& currentTime, unsigned long& remainingTime) {
-  unsigned int currentTimeSecs = timeInSeconds(currentTime);
+void isAdHocWatering(boolean& isWateringPeriod, const DebouncedButton& button, unsigned long& wateringTime, const TimeFromRtc& currentTime, unsigned long& remainingTime) {
+  unsigned long currentTimeSecs = timeInSeconds(currentTime);
   if ( DebouncedButton_getTransition(button) == true && DebouncedButton_getState(button) == HIGH ) {
     if ( wateringTime == 0 ) {
       wateringTime = currentTimeSecs + 30;
     } else {
       wateringTime += 30;
     }
+  }
+
+  if (wateringTime >= 86340UL) {
+    wateringTime = 86340UL;
   }
 
   isWateringPeriod = (wateringTime > 0 && wateringTime > currentTimeSecs);
