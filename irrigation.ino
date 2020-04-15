@@ -23,107 +23,39 @@ limitations under the License.
 Adafruit_SSD1306 display(OLED_RESET);
 
 struct DebouncedButton {
-  int lastState;
-  int lastDebounceTime;
-  int debouncedState;
-  int pin;
+  uint8_t lastState;
+  uint8_t lastDebounceTime;
+  uint8_t debouncedState;
+  uint8_t pin;
   boolean transition;
 };
 
-
-
-DebouncedButton startWateringButton;
-
 struct WateringPeriod {
-  byte startHour;
-  byte startMinute;
-  byte endHour;
-  byte endMinute;
+  uint8_t startHour;
+  uint8_t startMinute;
+  uint8_t endHour;
+  uint8_t endMinute;
 };
 
 WateringPeriod wateringPeriods[] = {
   {6, 0, 6, 15},
-  {18, 0, 18, 15},
-  {19, 0, 19, 15},
-  {19, 55, 20, 00},
-  {20, 50, 20, 52},
-  {21, 0, 21, 5},
-  {21, 45, 21, 50},
-  {22, 0, 22, 5}
+  {22, 0, 22, 15}
 };
-
 
 #define AD_HOC_WATERING_PERIOD 300 // 5 minutes of ad-hoc watering
-unsigned long adHocWateringEndTime = 0;
+uint32_t adHocWateringEndTime = 0;
+DebouncedButton startWateringButton;
 
 struct TimeFromRtc {
-  byte second;
-  byte minute;
-  byte hour;
-  byte dayOfWeek;
-  byte dayOfMonth;
-  byte month;
-  byte year;
+  uint8_t second;
+  uint8_t minute;
+  uint8_t hour;
+  uint8_t dayOfWeek;
+  uint8_t dayOfMonth;
+  uint8_t month;
+  uint8_t year;
 };
 
-
-#define DS3231_I2C_ADDRESS 0x68
-
-
-// Convert normal decimal numbers to binary coded decimal
-byte decToBcd(byte val) {
-  return ( (val / 10 * 16) + (val % 10) );
-}
-// Convert binary coded decimal to normal decimal numbers
-byte bcdToDec(byte val) {
-  return ( (val / 16 * 10) + (val % 16) );
-}
-
-void setup() {
-
-  // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
-  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3D (for the 128x64)
-
-  // Clear the buffer.
-  display.clearDisplay();
-
-  Wire.begin();
-
-  pinMode(6, OUTPUT);
-  digitalWrite(6, LOW);
-
-  DebouncedButton_init(startWateringButton, START_BUTTON);
-}
-
-void setDS3231time(byte second, byte minute, byte hour, byte dayOfWeek, byte
-                   dayOfMonth, byte month, byte year) {
-  // sets time and date data to DS3231
-  Wire.beginTransmission(DS3231_I2C_ADDRESS);
-  Wire.write(0); // set next input to start at the seconds register
-  Wire.write(decToBcd(second)); // set seconds
-  Wire.write(decToBcd(minute)); // set minutes
-  Wire.write(decToBcd(hour)); // set hours
-  Wire.write(decToBcd(dayOfWeek)); // set day of week (1=Sunday, 7=Saturday)
-  Wire.write(decToBcd(dayOfMonth)); // set date (1 to 31)
-  Wire.write(decToBcd(month)); // set month
-  Wire.write(decToBcd(year)); // set year (0 to 99)
-  Wire.endTransmission();
-}
-
-void readTime(TimeFromRtc& time, int from) {
-  Wire.beginTransmission(from);
-  Wire.write(0); // set DS3231 register pointer to 00h
-  Wire.endTransmission();
-  Wire.requestFrom(from, 7);
-  // request seven bytes of data from DS3231 starting from register 00h
-  time.second = bcdToDec(Wire.read() & 0x7f);
-  time.minute = bcdToDec(Wire.read());
-  time.hour = bcdToDec(Wire.read() & 0x3f);
-  time.dayOfWeek = bcdToDec(Wire.read());
-  time.dayOfMonth = bcdToDec(Wire.read());
-  time.month = bcdToDec(Wire.read());
-  time.year = bcdToDec(Wire.read());
-}
 
 #define DEBOUNCE_BUTTON_DELAY 50
 void DebouncedButton_init(DebouncedButton& button, int pin) {
@@ -164,24 +96,68 @@ boolean DebouncedButton_getTransition(const DebouncedButton& button) {
   return button.transition;
 }
 
-#define TIME_IN_SECS(hour, minute, second) ((unsigned long)hour * 3600 + (unsigned long)minute * 60 + (unsigned long)second)
 
-unsigned long timeInSeconds(const TimeFromRtc& time) {
+
+// Convert binary coded decimal to normal decimal numbers
+uint8_t bcdToDec(uint8_t val) {
+  return ( (val / 16 * 10) + (val % 16) );
+}
+
+void readTime(TimeFromRtc& time, int from) {
+  Wire.beginTransmission(from);
+  Wire.write(0); // set DS3231 register pointer to 00h
+  Wire.endTransmission();
+  Wire.requestFrom(from, 7);
+  // request seven uint8_ts of data from DS3231 starting from register 00h
+  time.second = bcdToDec(Wire.read() & 0x7f);
+  time.minute = bcdToDec(Wire.read());
+  time.hour = bcdToDec(Wire.read() & 0x3f);
+  time.dayOfWeek = bcdToDec(Wire.read());
+  time.dayOfMonth = bcdToDec(Wire.read());
+  time.month = bcdToDec(Wire.read());
+  time.year = bcdToDec(Wire.read());
+}
+
+
+#define TIME_IN_SECS(hour, minute, second) ((uint32_t)hour * 3600 + (uint32_t)minute * 60 + (uint32_t)second)
+
+uint32_t timeInSeconds(const TimeFromRtc& time) {
   return TIME_IN_SECS(time.hour, time.minute, time.second);
 }
+
+
+#define DS3231_I2C_ADDRESS 0x68
+
+
+void setup() {
+
+  // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3D (for the 128x64)
+
+  // Clear the buffer.
+  display.clearDisplay();
+
+  Wire.begin();
+
+  pinMode(6, OUTPUT);
+  digitalWrite(6, LOW);
+
+  DebouncedButton_init(startWateringButton, START_BUTTON);
+}
+
 
 void isWateringPeriod(boolean& watering, 
                       const TimeFromRtc& currentTime,
                       const WateringPeriod wateringPeriods[], 
                       const size_t numWateringPeriods, 
-                      unsigned long& remainingTime) {
+                      uint32_t& remainingTime) {
   watering = false;
-  unsigned long currentTimeSecs = timeInSeconds(currentTime);
+  uint32_t currentTimeSecs = timeInSeconds(currentTime);
   int closestWateringPeriod = 0;
-  unsigned long closestDifference = 86400UL; // maximum value of 24 hours
+  uint32_t closestDifference = 86400UL; // maximum value of 24 hours
   for (int i = 0; i < numWateringPeriods; i++) {
-    unsigned long wateringPeriodStartSecs = TIME_IN_SECS(wateringPeriods[i].startHour, wateringPeriods[i].startMinute, 0);
-    unsigned long wateringPeriodEndSecs = TIME_IN_SECS(wateringPeriods[i].endHour, wateringPeriods[i].endMinute, 0);
+    uint32_t wateringPeriodStartSecs = TIME_IN_SECS(wateringPeriods[i].startHour, wateringPeriods[i].startMinute, 0);
+    uint32_t wateringPeriodEndSecs = TIME_IN_SECS(wateringPeriods[i].endHour, wateringPeriods[i].endMinute, 0);
     if ( currentTimeSecs >= wateringPeriodStartSecs && currentTimeSecs < wateringPeriodEndSecs ) {
       watering = true;
       remainingTime = wateringPeriodEndSecs - currentTimeSecs;
@@ -206,7 +182,7 @@ void writeState( boolean watering ) {
   }
 }
 
-void displayTime(unsigned int hours, unsigned int minutes, unsigned int seconds) {
+void displayTime(uint32_t hours, uint32_t minutes, uint32_t seconds) {
   if (hours < 10 ) display.print(0);
   display.print(hours);
   display.print(":");
@@ -217,7 +193,7 @@ void displayTime(unsigned int hours, unsigned int minutes, unsigned int seconds)
   display.print(seconds);
 }
 
-void displayState(const Adafruit_SSD1306& display, const TimeFromRtc& currentTime, boolean watering, unsigned long remainingTimeSecs) {
+void displayState(const Adafruit_SSD1306& display, const TimeFromRtc& currentTime, boolean watering, uint32_t remainingTimeSecs) {
   display.clearDisplay();
   display.setTextSize(2);
   display.setTextColor(WHITE);
@@ -235,16 +211,15 @@ void displayState(const Adafruit_SSD1306& display, const TimeFromRtc& currentTim
   }
 
   display.setCursor(0, 34);
-  //display.print(remainingTimeSecs);
-  unsigned long remainingHours = remainingTimeSecs / 3600;
-  unsigned long remainingMinutes = ((remainingTimeSecs - remainingHours * 3600) / 60);
-  unsigned long remainingSeconds = ((remainingTimeSecs - remainingHours * 3600 - remainingMinutes * 60));
+  uint32_t remainingHours = remainingTimeSecs / 3600;
+  uint32_t remainingMinutes = ((remainingTimeSecs - remainingHours * 3600) / 60);
+  uint32_t remainingSeconds = ((remainingTimeSecs - remainingHours * 3600 - remainingMinutes * 60));
   displayTime( remainingHours, remainingMinutes, remainingSeconds);
   display.display();
 }
 
-void isAdHocWatering(boolean& isWateringPeriod, const DebouncedButton& button, unsigned long& wateringTime, const TimeFromRtc& currentTime, unsigned long& remainingTime) {
-  unsigned long currentTimeSecs = timeInSeconds(currentTime);
+void isAdHocWatering(boolean& isWateringPeriod, const DebouncedButton& button, uint32_t& wateringTime, const TimeFromRtc& currentTime, uint32_t& remainingTime) {
+  uint32_t currentTimeSecs = timeInSeconds(currentTime);
   if ( DebouncedButton_getTransition(button) == true && DebouncedButton_getState(button) == HIGH ) {
     if ( wateringTime == 0 ) {
       wateringTime = currentTimeSecs + 30;
@@ -271,8 +246,8 @@ void loop() {
   TimeFromRtc currentTime = {};
   boolean wateringPeriod = false;
   boolean adHocWatering = false;
-  unsigned long remainingTime = 0;
-  unsigned long adHocRemainingTime = 0;
+  uint32_t remainingTime = 0;
+  uint32_t adHocRemainingTime = 0;
 
   // Read all inputs
   DebouncedButton_read(startWateringButton);
