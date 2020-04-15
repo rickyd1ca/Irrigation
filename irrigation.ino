@@ -56,7 +56,6 @@ struct TimeFromRtc {
   uint8_t year;
 };
 
-
 #define DEBOUNCE_BUTTON_DELAY 50
 void DebouncedButton_init(DebouncedButton& button, int pin) {
   button.pin = pin;
@@ -96,8 +95,6 @@ boolean DebouncedButton_getTransition(const DebouncedButton& button) {
   return button.transition;
 }
 
-
-
 // Convert binary coded decimal to normal decimal numbers
 uint8_t bcdToDec(uint8_t val) {
   return ( (val / 16 * 10) + (val % 16) );
@@ -118,16 +115,13 @@ void readTime(TimeFromRtc& time, int from) {
   time.year = bcdToDec(Wire.read());
 }
 
-
 #define TIME_IN_SECS(hour, minute, second) ((uint32_t)hour * 3600 + (uint32_t)minute * 60 + (uint32_t)second)
 
 uint32_t timeInSeconds(const TimeFromRtc& time) {
   return TIME_IN_SECS(time.hour, time.minute, time.second);
 }
 
-
 #define DS3231_I2C_ADDRESS 0x68
-
 
 void setup() {
 
@@ -144,7 +138,6 @@ void setup() {
 
   DebouncedButton_init(startWateringButton, START_BUTTON);
 }
-
 
 void isWateringPeriod(boolean& watering, 
                       const TimeFromRtc& currentTime,
