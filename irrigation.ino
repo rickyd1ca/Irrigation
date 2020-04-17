@@ -48,6 +48,8 @@ WateringPeriod wateringPeriods[] = {
 #define HUMIDITY_WET_THREASHOLD 423
 #define HUMIDITY_HUMID_THREASHOLD 516
 #define HUMIDITY_POLL_PERIOD 200
+#define HUMIDITY_MAX_VALUE 700
+#define HUMIDITY_MIN_VALUE 250
 
 enum {
   SOIL_HUMIDITY_WET,
@@ -65,7 +67,8 @@ const char* soilHumidityStrings[] = {
 
 // Debounce the humidity sensor to detect failed sensor.
 // Failed sensors have values that vary wildly
-// I 
+// the code tries to detect that and mark the sensor as 
+// failed if it thinks the readings are inconsistent.
 struct HumiditySensor {
   unsigned long lastReadValueTime;
   uint16_t lastValue;
@@ -96,7 +99,6 @@ void SoilHumidity_init(HumiditySensor& humiditySensor, int pin) {
   humiditySensor.pin = pin;
   humiditySensor.soilHumidity = SOIL_HUMIDITY_ERROR;
   humiditySensor.numberErraticRead = 0;
-  
 }
 
 void SoilHumidity_read(HumiditySensor& humiditySensor) {
@@ -107,7 +109,9 @@ void SoilHumidity_read(HumiditySensor& humiditySensor) {
     uint16_t currentValue = analogRead(humiditySensor.pin);
     humiditySensor.lastReadValueTime = currentMillis;
     
-    if ( abs(humiditySensor.lastValue - currentValue) < 20 ) {
+    if ( abs(humiditySensor.lastValue - currentValue) < 20 && 
+         currentValue > HUMIDITY_MIN_VALUE && 
+         currentValue < HUMIDITY_MAX_VALUE ) {
       if (humiditySensor.numberErraticRead > 0) {
         humiditySensor.numberErraticRead--;        
         return;
