@@ -14,10 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include <Adafruit_SSD1306.h>
 #include <DebouncedButton.h>
 #include <CapacitiveMoistureSensor.h>
 #include "Wire.h"
+#include <LiquidCrystal_I2C.h>
 #include <avr/wdt.h>
 
 // Enable debug prints to serial monitor
@@ -33,7 +33,8 @@ limitations under the License.
 
 #define START_BUTTON 8
 #define OLED_RESET 4
-Adafruit_SSD1306 display(OLED_RESET);
+
+LiquidCrystal_I2C display = LiquidCrystal_I2C(0x27, 20, 4);
 
 struct WateringPeriod {
   uint8_t startHour;
@@ -137,10 +138,8 @@ void presentation()
 void setup() {
 
   // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
-  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3D (for the 128x64)
-
-  // Clear the buffer.
-  display.clearDisplay();
+  display.init();
+  display.backlight();
 
   Wire.begin();
 
@@ -198,15 +197,13 @@ void displayTime(uint32_t hours, uint32_t minutes, uint32_t seconds) {
   display.print(seconds);
 }
 
-#define DISPLAY_COLUMNS_BIG_TEXT 10
 #define DISPLAY_COLUMNS_FIRST_LINE 20
-void displayCentered(const Adafruit_SSD1306& display, const char* string, uint8_t textSize) {
+void displayCentered(const LiquidCrystal_I2C& display, const char* string, uint8_t textSize) {
   uint8_t strLen = strlen(string);
-  uint8_t displayColumns = textSize == 1 ? DISPLAY_COLUMNS_FIRST_LINE : DISPLAY_COLUMNS_BIG_TEXT;
+  uint8_t displayColumns = DISPLAY_COLUMNS_FIRST_LINE;
   uint8_t whitespaces = displayColumns - strLen;
   uint8_t prefix = (whitespaces / 2) + (whitespaces & 0x01);
 
-  display.setTextSize(textSize);
   for (int i=0; i < prefix; i++){
     display.print(" ");
   }
@@ -214,10 +211,9 @@ void displayCentered(const Adafruit_SSD1306& display, const char* string, uint8_
   
 }
 
-void displayFirstLine(const Adafruit_SSD1306& display, const TimeFromRtc& currentTime) {
+void displayFirstLine(const LiquidCrystal_I2C& display, const TimeFromRtc& currentTime) {
   static const char* dayOfWeeks[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
-  display.setTextSize(1);
   display.setCursor(0, 0);
   if (currentTime.hour < 10) {
     display.print(0);
@@ -247,30 +243,41 @@ void displayFirstLine(const Adafruit_SSD1306& display, const TimeFromRtc& curren
   display.print(currentTime.month);
 }
 
-void displayState(const Adafruit_SSD1306& display, const TimeFromRtc& currentTime, boolean watering, uint32_t remainingTimeSecs, const CapacitiveMoistureSensor humiditySensors[]) {
-  display.clearDisplay();
-  display.setTextColor(WHITE);
-
+void displayState(const LiquidCrystal_I2C& display, const TimeFromRtc& currentTime, boolean watering, uint32_t remainingTimeSecs, const CapacitiveMoistureSensor humiditySensors[]) {
   // Display current time
+  display.setCursor(0, 0);
   displayFirstLine(display, currentTime);
 
   // Display state
-  display.setCursor(0, 16);
-  if (watering) {
-    displayCentered(display, "WATERING", 2);
-  } else {
-    displayCentered(display, "NEXT", 2);
-  }
-
-  display.setCursor(0, 32);
+  display.setCursor(0, 1);
   uint32_t remainingHours = remainingTimeSecs / 3600;
   uint32_t remainingMinutes = ((remainingTimeSecs - remainingHours * 3600) / 60);
   uint32_t remainingSeconds = ((remainingTimeSecs - remainingHours * 3600 - remainingMinutes * 60));
-  display.print(" ");
-  displayTime( remainingHours, remainingMinutes, remainingSeconds);
+  if (watering) {
+    display.print("WATERING       ");
+    if (remainingMinutes < 10){
+      display.print(0);
+    }
+    display.print(remainingMinutes);
+    display.print(":");
+    if (remainingSeconds < 10){
+      display.print(0);
+    }
+    display.print(remainingSeconds);
+  } else {
+    display.print("NEXT           ");
+    if (remainingHours < 10){
+      display.print(0);
+    }
+    display.print(remainingHours);
+    display.print(":");
+    if (remainingMinutes < 10){
+      display.print(0);
+    }
+    display.print(remainingMinutes);
+  }
 
-  display.setTextSize(1);
-  display.setCursor(0, 48);
+  display.setCursor(0, 2);
   for (int i = 0; i < 3; i++){
     display.print("CH");
     display.print(i+1);
@@ -278,14 +285,13 @@ void displayState(const Adafruit_SSD1306& display, const TimeFromRtc& currentTim
       display.print(" ");
     }
   }
-  display.print("\n");
+  display.setCursor(0, 3);
   for (int i = 0; i < 3; i++){
     display.print(humiditySensors[i].getStateStr());
     for (int j = 0; j < 3; j++){
       display.print(" ");
     }
   }
-  display.display();
 }
 
 void isAdHocWatering(boolean& isWateringPeriod, const DebouncedButton& button, uint32_t& wateringTime, const TimeFromRtc& currentTime, uint32_t& remainingTime) {
@@ -322,14 +328,14 @@ void loop() {
   // Read all inputs
   startWateringButton.read();
   readTime(currentTime, DS3231_I2C_ADDRESS);
-  SoilHumidity_readSensors(humiditySensors, sizeof(humiditySensors)/sizeof(HumiditySensor)); 
+  SoilHumidity_readSensors(humiditySensors, sizeof(humiditySensors)/sizeof(humiditySensors[0])); 
 
   // Calculate state
   isWateringPeriod(wateringPeriod, currentTime, wateringPeriods, sizeof(wateringPeriods) / sizeof(WateringPeriod), remainingTime);
   isAdHocWatering(adHocWatering, startWateringButton, adHocWateringEndTime, currentTime, adHocRemainingTime);
 
   // Consider the 
-  boolean wateringInPeriod = wateringPeriod && SoilHumidity_isSoilDry(humiditySensors, sizeof(humiditySensors)/sizeof(HumiditySensor));
+  boolean wateringInPeriod = wateringPeriod && SoilHumidity_isSoilDry(humiditySensors, sizeof(humiditySensors)/sizeof(humiditySensors[0]));
 
   // Write all outputs
   writeState(wateringInPeriod || adHocWatering);
