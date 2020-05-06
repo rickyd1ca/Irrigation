@@ -14,22 +14,26 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <DebouncedButton.h>
+#include <CapacitiveMoistureSensor.h>
 #include "Wire.h"
+#include <avr/wdt.h>
+
+// Enable debug prints to serial monitor
+//#define MY_DEBUG
+
+// Enable and select radio type attached
+//#define MY_RADIO_RF24
+//#define MY_RADIO_NRF5_ESB
+//#define MY_RADIO_RFM69
+//#define MY_RADIO_RFM95
+
+//#include <MySensors.h>
 
 #define START_BUTTON 8
 #define OLED_RESET 4
-#define SOIL_HUMIDITY_SENSOR A2
 Adafruit_SSD1306 display(OLED_RESET);
-
-struct DebouncedButton {
-  unsigned long lastDebounceTime;
-  uint8_t lastState;
-  uint8_t debouncedState;
-  uint8_t pin;
-  boolean transition;
-};
 
 struct WateringPeriod {
   uint8_t startHour;
@@ -43,45 +47,15 @@ WateringPeriod wateringPeriods[] = {
   {22, 0, 22, 15}
 };
 
-// Soil humidity sensor range ~330 (wet) to ~610 (dry)
-// divide range in wet (below 423), humid (423 to 516) and dry (above 516)
-#define HUMIDITY_WET_THREASHOLD 423
-#define HUMIDITY_HUMID_THREASHOLD 516
-#define HUMIDITY_POLL_PERIOD 200
-#define HUMIDITY_MAX_VALUE 700
-#define HUMIDITY_MIN_VALUE 250
-
-enum {
-  SOIL_HUMIDITY_WET,
-  SOIL_HUMIDITY_HUMID,
-  SOIL_HUMIDITY_DRY,
-  SOIL_HUMIDITY_ERROR
-};
-
-const char* soilHumidityStrings[] = { 
-  "Wet",
-  "Humid",
-  "Dry",
-  "Error"
-};
-
-// Debounce the humidity sensor to detect failed sensor.
-// Failed sensors have values that vary wildly
-// the code tries to detect that and mark the sensor as 
-// failed if it thinks the readings are inconsistent.
-struct HumiditySensor {
-  unsigned long lastReadValueTime;
-  uint16_t lastValue;
-  uint8_t pin;
-  uint8_t soilHumidity;
-  uint8_t numberErraticRead;
-};
-
-HumiditySensor humiditySensor; 
+CapacitiveMoistureSensor humiditySensors[] = {
+  A3,
+  A2, 
+  A1
+  }; 
 
 #define AD_HOC_WATERING_PERIOD 300 // 5 minutes of ad-hoc watering
 uint32_t adHocWateringEndTime = 0;
-DebouncedButton startWateringButton;
+DebouncedButton startWateringButton(START_BUTTON);
 
 struct TimeFromRtc {
   uint8_t second;
@@ -93,90 +67,35 @@ struct TimeFromRtc {
   uint8_t year;
 };
 
-void SoilHumidity_init(HumiditySensor& humiditySensor, int pin) {
-  humiditySensor.lastReadValueTime = 0;
-  humiditySensor.lastValue = 0;
-  humiditySensor.pin = pin;
-  humiditySensor.soilHumidity = SOIL_HUMIDITY_ERROR;
-  humiditySensor.numberErraticRead = 0;
+void SoilHumidity_readSensors(const CapacitiveMoistureSensor sensors[], size_t numSensors) {
+  for( int i = 0; i < numSensors; i++ ) {
+    sensors[i].read();
+  }
 }
 
-void SoilHumidity_read(HumiditySensor& humiditySensor) {
-  unsigned long currentMillis = millis();
-
-  if ( currentMillis - humiditySensor.lastReadValueTime > HUMIDITY_POLL_PERIOD ) {
-    // Read current value
-    uint16_t currentValue = analogRead(humiditySensor.pin);
-    humiditySensor.lastReadValueTime = currentMillis;
-    
-    if ( abs(humiditySensor.lastValue - currentValue) < 20 && 
-         currentValue > HUMIDITY_MIN_VALUE && 
-         currentValue < HUMIDITY_MAX_VALUE ) {
-      if (humiditySensor.numberErraticRead > 0) {
-        humiditySensor.numberErraticRead--;        
-        return;
-      }
-      // 2 values are close enough, evaluate the state
-      // Reset number of erratic reads
-      if (currentValue < HUMIDITY_WET_THREASHOLD ) {
-        humiditySensor.soilHumidity = SOIL_HUMIDITY_WET;
-      } else if (currentValue < HUMIDITY_HUMID_THREASHOLD) {
-        humiditySensor.soilHumidity = SOIL_HUMIDITY_HUMID;
-      } else {
-        humiditySensor.soilHumidity = SOIL_HUMIDITY_DRY;
-      }
-    } else {
-      humiditySensor.numberErraticRead++;
-      if (humiditySensor.numberErraticRead > 20){
-        humiditySensor.soilHumidity = SOIL_HUMIDITY_ERROR;
-        humiditySensor.numberErraticRead = 20;
-      }
+boolean SoilHumidity_isSoilDry(const CapacitiveMoistureSensor sensors[], size_t numSensors) {
+  int numOperationalSensors = 0;
+  int numOperationalSensorsDry = 0;
+  for(int i = 0; i < numSensors; i++ ) {
+    if (sensors[i].getMoisture() != CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR) {
+      numOperationalSensors++;
     }
-    humiditySensor.lastValue = currentValue;
-  }
-}
 
-const char* SoilHumidity_getStateStr(const HumiditySensor& humiditySensor) {
-  return soilHumidityStrings[humiditySensor.soilHumidity];
-}
-
-#define DEBOUNCE_BUTTON_DELAY 50
-void DebouncedButton_init(DebouncedButton& button, int pin) {
-  button.pin = pin;
-  button.lastState = LOW;
-  button.debouncedState = LOW;
-  button.lastDebounceTime = 0;
-  button.transition = false;
-  pinMode(button.pin, INPUT);
-}
-
-void DebouncedButton_read(DebouncedButton& button) {
-  int reading = digitalRead(button.pin);
-  button.transition = false;
-
-  if (reading != button.lastState) {
-    button.lastDebounceTime = millis();
-    button.lastState = reading;
-  }
-
-  if ((millis() - button.lastDebounceTime) > DEBOUNCE_BUTTON_DELAY) {
-    // whatever the reading is at, it's been there for longer than the debounce
-    // delay, so take it as the actual current state:
-
-    // if the button state has changed:
-    if (button.lastState != button.debouncedState) {
-      button.debouncedState = button.lastState;
-      button.transition = true;
+    if (sensors[i].getMoisture() != CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY) {
+      numOperationalSensorsDry++; 
     }
   }
-}
 
-int DebouncedButton_getState(const DebouncedButton& button) {
-  return button.debouncedState;
-}
+  if(numOperationalSensors == 0) {
+    // No operational sensors, return true 
+    return true;
+  }
 
-boolean DebouncedButton_getTransition(const DebouncedButton& button) {
-  return button.transition;
+  if( (float)numOperationalSensorsDry/(float)numOperationalSensors > 0.5f) {
+    return true;
+  }
+
+  return false;
 }
 
 // Convert binary coded decimal to normal decimal numbers
@@ -207,6 +126,14 @@ uint32_t timeInSeconds(const TimeFromRtc& time) {
 
 #define DS3231_I2C_ADDRESS 0x68
 
+void presentation()
+{
+//  sendSketchInfo("Garden moisture", "1.0");
+//  for ( size_t i; i < sizeof(humiditySensors)/sizeof(HumiditySensor); i++) {
+//    present(i, S_MOISTURE);   
+//  }
+}
+
 void setup() {
 
   // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
@@ -220,8 +147,7 @@ void setup() {
   pinMode(6, OUTPUT);
   digitalWrite(6, LOW);
 
-  DebouncedButton_init(startWateringButton, START_BUTTON);
-  SoilHumidity_init(humiditySensor, SOIL_HUMIDITY_SENSOR);
+  wdt_enable(WDTO_1S);
 }
 
 void isWateringPeriod(boolean& watering, 
@@ -260,6 +186,7 @@ void writeState( boolean watering ) {
   }
 }
 
+
 void displayTime(uint32_t hours, uint32_t minutes, uint32_t seconds) {
   if (hours < 10 ) display.print(0);
   display.print(hours);
@@ -271,37 +198,99 @@ void displayTime(uint32_t hours, uint32_t minutes, uint32_t seconds) {
   display.print(seconds);
 }
 
-void displayState(const Adafruit_SSD1306& display, const TimeFromRtc& currentTime, boolean watering, uint32_t remainingTimeSecs, const char* humidity) {
-  display.clearDisplay();
-  display.setTextSize(2);
-  display.setTextColor(WHITE);
+#define DISPLAY_COLUMNS_BIG_TEXT 10
+#define DISPLAY_COLUMNS_FIRST_LINE 20
+void displayCentered(const Adafruit_SSD1306& display, const char* string, uint8_t textSize) {
+  uint8_t strLen = strlen(string);
+  uint8_t displayColumns = textSize == 1 ? DISPLAY_COLUMNS_FIRST_LINE : DISPLAY_COLUMNS_BIG_TEXT;
+  uint8_t whitespaces = displayColumns - strLen;
+  uint8_t prefix = (whitespaces / 2) + (whitespaces & 0x01);
+
+  display.setTextSize(textSize);
+  for (int i=0; i < prefix; i++){
+    display.print(" ");
+  }
+  display.print(string);
+  
+}
+
+void displayFirstLine(const Adafruit_SSD1306& display, const TimeFromRtc& currentTime) {
+  static const char* dayOfWeeks[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+
+  display.setTextSize(1);
   display.setCursor(0, 0);
+  if (currentTime.hour < 10) {
+    display.print(0);
+  }
+  display.print(currentTime.hour);
+  display.print(":");
+  if (currentTime.minute < 10) {
+    display.print(0);
+  }
+  display.print(currentTime.minute);
+  for (uint8_t i = 0; i < 4; i++){
+    display.print(" ");  
+  }
+  display.print(dayOfWeeks[currentTime.dayOfWeek - 1]);
+  for (uint8_t i = 0; i < 3; i++){
+    display.print(" ");  
+  }
+  
+  if (currentTime.dayOfMonth < 10) {
+    display.print(0);
+  }
+  display.print(currentTime.dayOfMonth);
+  display.print("/");
+  if (currentTime.month < 10) {
+    display.print(0);
+  }
+  display.print(currentTime.month);
+}
+
+void displayState(const Adafruit_SSD1306& display, const TimeFromRtc& currentTime, boolean watering, uint32_t remainingTimeSecs, const CapacitiveMoistureSensor humiditySensors[]) {
+  display.clearDisplay();
+  display.setTextColor(WHITE);
 
   // Display current time
-  displayTime(currentTime.hour, currentTime.minute, currentTime.second);
-  
-  display.setCursor(0, 17);
+  displayFirstLine(display, currentTime);
 
+  // Display state
+  display.setCursor(0, 16);
   if (watering) {
-    display.print("Watering");
+    displayCentered(display, "WATERING", 2);
   } else {
-    display.print("Idle");
+    displayCentered(display, "NEXT", 2);
   }
 
-  display.setCursor(0, 34);
+  display.setCursor(0, 32);
   uint32_t remainingHours = remainingTimeSecs / 3600;
   uint32_t remainingMinutes = ((remainingTimeSecs - remainingHours * 3600) / 60);
   uint32_t remainingSeconds = ((remainingTimeSecs - remainingHours * 3600 - remainingMinutes * 60));
+  display.print(" ");
   displayTime( remainingHours, remainingMinutes, remainingSeconds);
 
-  display.setCursor(0, 51);
-  display.print(humidity);
+  display.setTextSize(1);
+  display.setCursor(0, 48);
+  for (int i = 0; i < 3; i++){
+    display.print("CH");
+    display.print(i+1);
+    for (int j = 0; j < 3; j++){
+      display.print(" ");
+    }
+  }
+  display.print("\n");
+  for (int i = 0; i < 3; i++){
+    display.print(humiditySensors[i].getStateStr());
+    for (int j = 0; j < 3; j++){
+      display.print(" ");
+    }
+  }
   display.display();
 }
 
 void isAdHocWatering(boolean& isWateringPeriod, const DebouncedButton& button, uint32_t& wateringTime, const TimeFromRtc& currentTime, uint32_t& remainingTime) {
   uint32_t currentTimeSecs = timeInSeconds(currentTime);
-  if ( DebouncedButton_getTransition(button) == true && DebouncedButton_getState(button) == HIGH ) {
+  if ( button.getTransition() == true && button.getState() == HIGH ) {
     if ( wateringTime == 0 ) {
       wateringTime = currentTimeSecs + 30;
     } else {
@@ -331,19 +320,27 @@ void loop() {
   uint32_t adHocRemainingTime = 0;
 
   // Read all inputs
-  DebouncedButton_read(startWateringButton);
+  startWateringButton.read();
   readTime(currentTime, DS3231_I2C_ADDRESS);
-  SoilHumidity_read(humiditySensor);
-
+  SoilHumidity_readSensors(humiditySensors, sizeof(humiditySensors)/sizeof(HumiditySensor)); 
 
   // Calculate state
   isWateringPeriod(wateringPeriod, currentTime, wateringPeriods, sizeof(wateringPeriods) / sizeof(WateringPeriod), remainingTime);
   isAdHocWatering(adHocWatering, startWateringButton, adHocWateringEndTime, currentTime, adHocRemainingTime);
 
+  // Consider the 
+  boolean wateringInPeriod = wateringPeriod && SoilHumidity_isSoilDry(humiditySensors, sizeof(humiditySensors)/sizeof(HumiditySensor));
+
   // Write all outputs
-  writeState(wateringPeriod || adHocWatering);
+  writeState(wateringInPeriod || adHocWatering);
   displayState(display, 
                currentTime, 
-               wateringPeriod || adHocWatering, adHocWatering ? adHocRemainingTime : remainingTime, 
-               SoilHumidity_getStateStr(humiditySensor));
+               wateringInPeriod || adHocWatering, adHocWatering ? adHocRemainingTime : remainingTime,
+               humiditySensors);
+
+  // Kick the watchdog
+  wdt_reset();             
+
+  //send(msg.set((int32_t)));
+
 }
