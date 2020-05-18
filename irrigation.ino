@@ -32,7 +32,7 @@ limitations under the License.
 //#include <MySensors.h>
 
 // Enable to run sensor tests
-#define RUN_TESTS
+//#define RUN_TESTS
 
 #define START_BUTTON 8
 #define OLED_RESET 4
