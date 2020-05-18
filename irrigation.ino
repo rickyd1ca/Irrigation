@@ -31,6 +31,9 @@ limitations under the License.
 
 //#include <MySensors.h>
 
+// Enable to run sensor tests
+#define RUN_TESTS
+
 #define START_BUTTON 8
 #define OLED_RESET 4
 
@@ -44,8 +47,8 @@ struct WateringPeriod {
 };
 
 WateringPeriod wateringPeriods[] = {
-  {6, 0, 6, 15},
-  {22, 0, 22, 15}
+  {6, 0, 6, 4},
+  {22, 0, 22, 4}
 };
 
 CapacitiveMoistureSensor humiditySensors[] = {
@@ -80,9 +83,12 @@ boolean SoilHumidity_isSoilDry(const CapacitiveMoistureSensor sensors[], size_t 
   for(int i = 0; i < numSensors; i++ ) {
     if (sensors[i].getMoisture() != CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR) {
       numOperationalSensors++;
+    } else {
+      // Sensor in error, continue
+      continue;
     }
 
-    if (sensors[i].getMoisture() != CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY) {
+    if (sensors[i].getMoisture() != CapacitiveMoistureSensor::SOIL_HUMIDITY_WET) {
       numOperationalSensorsDry++; 
     }
   }
@@ -145,6 +151,8 @@ void setup() {
 
   pinMode(6, OUTPUT);
   digitalWrite(6, LOW);
+
+  Serial.begin(9600);
 
   wdt_enable(WDTO_1S);
 }
@@ -317,7 +325,105 @@ void isAdHocWatering(boolean& isWateringPeriod, const DebouncedButton& button, u
   }
 }
 
-void loop() {
+void testSoilHumidityDetection() {
+
+  Serial.println("Starting soil test");
+  CapacitiveMoistureSensor sensors[3];
+
+  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
+  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
+  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
+
+  boolean isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
+
+  Serial.print("Soil is dry {wet,wet,wet} = ");
+  Serial.println(isSoilDry);
+  
+  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY);
+  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
+  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
+
+  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
+
+  Serial.print("Soil is dry {dry,wet,wet} = ");
+  Serial.println(isSoilDry);
+    
+  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY);
+  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY);
+  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
+
+  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
+
+  Serial.print("Soil is dry {dry,dry,wet} = ");
+  Serial.println(isSoilDry);
+
+  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY);
+  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY);
+  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY);
+
+  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
+
+  Serial.print("Soil is dry {dry,dry,dry} = ");
+  Serial.println(isSoilDry);
+  
+  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
+  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
+  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
+
+  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
+
+  Serial.print("Soil is dry {hum,hum,hum} = ");
+  Serial.println(isSoilDry);
+
+  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
+  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
+  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
+
+  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
+
+  Serial.print("Soil is dry {hum,wet,wet} = ");
+  Serial.println(isSoilDry);
+
+  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
+  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
+  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
+
+  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
+
+  Serial.print("Soil is dry {hum,hum,wet} = ");
+  Serial.println(isSoilDry);
+  
+  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR);
+  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
+  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
+
+  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
+
+  Serial.print("Soil is dry {err,hum,wet} = ");
+  Serial.println(isSoilDry);
+
+  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR);
+  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR);
+  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
+
+  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
+
+  Serial.print("Soil is dry {err,err,wet} = ");
+  Serial.println(isSoilDry);
+
+  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR);
+  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR);
+  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR);
+
+  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
+
+  Serial.print("Soil is dry {err,err,err} = ");
+  Serial.println(isSoilDry);
+
+  delay(500);
+}
+
+void runIrrigation() {
   // put your main code here, to run repeatedly:
   TimeFromRtc currentTime = {};
   boolean wateringPeriod = false;
@@ -327,7 +433,7 @@ void loop() {
 
   // Read all inputs
   startWateringButton.read();
-  readTime(currentTime, DS3231_I2C_ADDRESS);
+  readTime(currentTime, DS3231_I2C_ADDRESS);  
   SoilHumidity_readSensors(humiditySensors, sizeof(humiditySensors)/sizeof(humiditySensors[0])); 
 
   // Calculate state
@@ -348,5 +454,16 @@ void loop() {
   wdt_reset();             
 
   //send(msg.set((int32_t)));
+  
+}
+
+
+void loop() {
+
+#ifdef RUN_TESTS
+  testSoilHumidityDetection();
+#else
+  runIrrigation();
+#endif
 
 }
