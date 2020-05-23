@@ -20,17 +20,6 @@ limitations under the License.
 #include <LiquidCrystal_I2C.h>
 #include <avr/wdt.h>
 
-// Enable debug prints to serial monitor
-//#define MY_DEBUG
-
-// Enable and select radio type attached
-//#define MY_RADIO_RF24
-//#define MY_RADIO_NRF5_ESB
-//#define MY_RADIO_RFM69
-//#define MY_RADIO_RFM95
-
-//#include <MySensors.h>
-
 // Enable to run sensor tests
 //#define RUN_TESTS
 
@@ -132,14 +121,6 @@ uint32_t timeInSeconds(const TimeFromRtc& time) {
 }
 
 #define DS3231_I2C_ADDRESS 0x68
-
-void presentation()
-{
-//  sendSketchInfo("Garden moisture", "1.0");
-//  for ( size_t i; i < sizeof(humiditySensors)/sizeof(HumiditySensor); i++) {
-//    present(i, S_MOISTURE);   
-//  }
-}
 
 void setup() {
 
