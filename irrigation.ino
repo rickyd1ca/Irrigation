@@ -19,9 +19,14 @@ limitations under the License.
 #include "Wire.h"
 #include <LiquidCrystal_I2C.h>
 #include <avr/wdt.h>
+#include "AnalogInput.h"
 
 // Enable to run sensor tests
 //#define RUN_TESTS
+
+#ifdef RUN_TESTS
+#include "MockAnalogInput.h"
+#endif
 
 #define START_BUTTON 8
 #define OLED_RESET 4
@@ -31,20 +36,30 @@ LiquidCrystal_I2C display = LiquidCrystal_I2C(0x27, 20, 4);
 struct WateringPeriod {
   uint8_t startHour;
   uint8_t startMinute;
+  uint8_t startSecond;
   uint8_t endHour;
   uint8_t endMinute;
+  uint8_t endSecond;
 };
 
 WateringPeriod wateringPeriods[] = {
-  {6, 0, 6, 4},
-  {22, 0, 22, 4}
+  { 4,  0, 0,  4,  0, 30},
+  { 8,  0, 0,  8,  0, 30},
+  {12,  0, 0, 12,  0, 30},
+  {16,  0, 0, 16,  0, 30},
+  {20,  0, 0, 20,  0, 30},
+  {23, 50, 0, 23, 50, 30}
 };
 
+AnalogInput sensor1(A3);
+AnalogInput sensor2(A2);
+AnalogInput sensor3(A1);
+
 CapacitiveMoistureSensor humiditySensors[] = {
-  A3,
-  A2, 
-  A1
-  }; 
+  sensor1,
+  sensor2, 
+  sensor3
+}; 
 
 #define AD_HOC_WATERING_PERIOD 300 // 5 minutes of ad-hoc watering
 uint32_t adHocWateringEndTime = 0;
@@ -66,20 +81,28 @@ void SoilHumidity_readSensors(const CapacitiveMoistureSensor sensors[], size_t n
   }
 }
 
-boolean SoilHumidity_isSoilDry(const CapacitiveMoistureSensor sensors[], size_t numSensors) {
+boolean SoilHumidity_isSoilDry(const CapacitiveMoistureSensor sensors[], size_t numSensors, uint8_t& avgHumidity) {
   int numOperationalSensors = 0;
-  int numOperationalSensorsDry = 0;
+  float totalHumidity = 0;
+  avgHumidity = 0;
+  char stringBuffer[128];
+  sprintf(stringBuffer, "SoilHumidity_isSoilDry: numSensors = %d", numSensors);
+  Serial.println(stringBuffer);
   for(int i = 0; i < numSensors; i++ ) {
+    sprintf(stringBuffer, "SoilHumidity_isSoilDry: currentSensor-1[%d]", i);
+    Serial.println(stringBuffer);
     if (sensors[i].getMoisture() != CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR) {
       numOperationalSensors++;
     } else {
       // Sensor in error, continue
+      sprintf(stringBuffer, "SoilHumidity_isSoilDry: currentSensor[%d] in error", i);
+      Serial.println(stringBuffer);
       continue;
     }
 
-    if (sensors[i].getMoisture() != CapacitiveMoistureSensor::SOIL_HUMIDITY_WET) {
-      numOperationalSensorsDry++; 
-    }
+    sprintf(stringBuffer, "SoilHumidity_isSoilDry: currentSensor[%d]", i);
+    Serial.println(stringBuffer);
+    totalHumidity += sensors[i].getMoistureLevel();
   }
 
   if(numOperationalSensors == 0) {
@@ -87,11 +110,10 @@ boolean SoilHumidity_isSoilDry(const CapacitiveMoistureSensor sensors[], size_t 
     return true;
   }
 
-  if( (float)numOperationalSensorsDry/(float)numOperationalSensors > 0.5f) {
-    return true;
-  }
+  totalHumidity = totalHumidity/numOperationalSensors;
+  avgHumidity = round(totalHumidity);
 
-  return false;
+  return (totalHumidity < 80.0f);
 }
 
 // Convert binary coded decimal to normal decimal numbers
@@ -135,7 +157,9 @@ void setup() {
 
   Serial.begin(9600);
 
+#ifndef RUN_TESTS
   wdt_enable(WDTO_1S);
+#endif
 }
 
 void isWateringPeriod(boolean& watering, 
@@ -148,8 +172,8 @@ void isWateringPeriod(boolean& watering,
   int closestWateringPeriod = 0;
   uint32_t closestDifference = 86400UL; // maximum value of 24 hours
   for (int i = 0; i < numWateringPeriods; i++) {
-    uint32_t wateringPeriodStartSecs = TIME_IN_SECS(wateringPeriods[i].startHour, wateringPeriods[i].startMinute, 0);
-    uint32_t wateringPeriodEndSecs = TIME_IN_SECS(wateringPeriods[i].endHour, wateringPeriods[i].endMinute, 0);
+    uint32_t wateringPeriodStartSecs = TIME_IN_SECS(wateringPeriods[i].startHour, wateringPeriods[i].startMinute, wateringPeriods[i].startSecond);
+    uint32_t wateringPeriodEndSecs = TIME_IN_SECS(wateringPeriods[i].endHour, wateringPeriods[i].endMinute, wateringPeriods[i].endSecond);
     if ( currentTimeSecs >= wateringPeriodStartSecs && currentTimeSecs < wateringPeriodEndSecs ) {
       watering = true;
       remainingTime = wateringPeriodEndSecs - currentTimeSecs;
@@ -163,7 +187,9 @@ void isWateringPeriod(boolean& watering,
       }
     }
   }
-  remainingTime = TIME_IN_SECS(wateringPeriods[closestWateringPeriod].startHour, wateringPeriods[closestWateringPeriod].startMinute, 0);
+  remainingTime = TIME_IN_SECS(wateringPeriods[closestWateringPeriod].startHour, 
+                               wateringPeriods[closestWateringPeriod].startMinute, 
+                               wateringPeriods[closestWateringPeriod].startSecond);
 }
 
 void writeState( boolean watering ) {
@@ -232,7 +258,8 @@ void displayFirstLine(const LiquidCrystal_I2C& display, const TimeFromRtc& curre
   display.print(currentTime.month);
 }
 
-void displayState(const LiquidCrystal_I2C& display, const TimeFromRtc& currentTime, boolean watering, uint32_t remainingTimeSecs, const CapacitiveMoistureSensor humiditySensors[]) {
+void displayState(const LiquidCrystal_I2C& display, const TimeFromRtc& currentTime, boolean watering, uint32_t remainingTimeSecs, 
+                  const CapacitiveMoistureSensor humiditySensors[], uint8_t avgHumidity) {
   // Display current time
   display.setCursor(0, 0);
   displayFirstLine(display, currentTime);
@@ -270,17 +297,24 @@ void displayState(const LiquidCrystal_I2C& display, const TimeFromRtc& currentTi
   for (int i = 0; i < 3; i++){
     display.print("CH");
     display.print(i+1);
-    for (int j = 0; j < 3; j++){
-      display.print(" ");
-    }
+    display.print(" ");
   }
   display.setCursor(0, 3);
   for (int i = 0; i < 3; i++){
-    display.print(humiditySensors[i].getStateStr());
-    for (int j = 0; j < 3; j++){
+    uint8_t moistureLevel = round(humiditySensors[i].getMoistureLevel());
+
+    if (moistureLevel < 10) {
       display.print(" ");
     }
+    display.print(round(humiditySensors[i].getMoistureLevel()));    
+    display.print("  ");
   }
+
+  display.print("      ");
+  if (avgHumidity < 10) {
+      display.print(" ");
+  }
+  display.print(avgHumidity);
 }
 
 void isAdHocWatering(boolean& isWateringPeriod, const DebouncedButton& button, uint32_t& wateringTime, const TimeFromRtc& currentTime, uint32_t& remainingTime) {
@@ -306,103 +340,53 @@ void isAdHocWatering(boolean& isWateringPeriod, const DebouncedButton& button, u
   }
 }
 
+
+#ifdef RUN_TESTS
 void testSoilHumidityDetection() {
 
   Serial.println("Starting soil test");
-  CapacitiveMoistureSensor sensors[3];
+  MockAnalogInput mockSensor1;
+  MockAnalogInput mockSensor2;
+  MockAnalogInput mockSensor3;
 
-  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
-  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
-  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
-
-  boolean isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
-
-  Serial.print("Soil is dry {wet,wet,wet} = ");
-  Serial.println(isSoilDry);
+  int mockSensor1Values[] =  {390,   400,   400,  800,   800};
+  int mockSensor2Values[] =  {390,   390,   400,  800,   800};  
+  int mockSensor3Values[] =  {390,   390,   390,  390,   800};
+  boolean expectedOutput[] = {false, false, true, false, true};
   
-  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY);
-  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
-  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
+  CapacitiveMoistureSensor sensors[] = {mockSensor1, mockSensor2, mockSensor3};
 
-  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
+  char stringBuffer[256];
 
-  Serial.print("Soil is dry {dry,wet,wet} = ");
-  Serial.println(isSoilDry);
+
+  for (int j = 0; j < sizeof(expectedOutput)/sizeof(expectedOutput[0]); j++){
+    mockSensor1.setValue(mockSensor1Values[j]);
+    mockSensor2.setValue(mockSensor2Values[j]);
+    mockSensor3.setValue(mockSensor3Values[j]);
     
-  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY);
-  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY);
-  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
-
-  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
-
-  Serial.print("Soil is dry {dry,dry,wet} = ");
-  Serial.println(isSoilDry);
-
-  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY);
-  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY);
-  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_DRY);
-
-  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
-
-  Serial.print("Soil is dry {dry,dry,dry} = ");
-  Serial.println(isSoilDry);
   
-  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
-  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
-  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
+    for (int i = 0; i < 22; i++){
+      SoilHumidity_readSensors(sensors, sizeof(sensors)/sizeof(sensors[0]));
+      delay(250);
+    }
 
-  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
-
-  Serial.print("Soil is dry {hum,hum,hum} = ");
-  Serial.println(isSoilDry);
-
-  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
-  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
-  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
-
-  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
-
-  Serial.print("Soil is dry {hum,wet,wet} = ");
-  Serial.println(isSoilDry);
-
-  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
-  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
-  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
-
-  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
-
-  Serial.print("Soil is dry {hum,hum,wet} = ");
-  Serial.println(isSoilDry);
-  
-  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR);
-  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_HUMID);
-  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
-
-  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
-
-  Serial.print("Soil is dry {err,hum,wet} = ");
-  Serial.println(isSoilDry);
-
-  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR);
-  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR);
-  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_WET);
-
-  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
-
-  Serial.print("Soil is dry {err,err,wet} = ");
-  Serial.println(isSoilDry);
-
-  sensors[0].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR);
-  sensors[1].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR);
-  sensors[2].setMoisture(CapacitiveMoistureSensor::SOIL_HUMIDITY_ERROR);
-
-  isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]));
-
-  Serial.print("Soil is dry {err,err,err} = ");
-  Serial.println(isSoilDry);
-
+    uint8_t avgHumidity = 0;
+    boolean isSoilDry = SoilHumidity_isSoilDry(sensors, sizeof(sensors)/sizeof(sensors[0]), avgHumidity);
+    if (isSoilDry == expectedOutput[j]) {
+      sprintf(stringBuffer, "Soil is dry {%d,%d,%d} = %d is expected value, avg = %d", mockSensor1Values[j], mockSensor2Values[j], mockSensor3Values[j], expectedOutput[j], avgHumidity);
+      Serial.println(stringBuffer);
+    } else {
+      sprintf(stringBuffer,"Soil is dry {%d,%d,%d} = %d is NOT expected value", mockSensor1Values[j], mockSensor2Values[j], mockSensor3Values[j], expectedOutput[j]);
+      Serial.println(stringBuffer);
+      sprintf(stringBuffer,"Test failed at j = %d", j);
+      Serial.println(stringBuffer);
+      break;
+    }
+  }  
+  Serial.println("TESTS PASSED");
   delay(500);
 }
+#endif
 
 void runIrrigation() {
   // put your main code here, to run repeatedly:
@@ -422,14 +406,17 @@ void runIrrigation() {
   isAdHocWatering(adHocWatering, startWateringButton, adHocWateringEndTime, currentTime, adHocRemainingTime);
 
   // Consider the 
-  boolean wateringInPeriod = wateringPeriod && SoilHumidity_isSoilDry(humiditySensors, sizeof(humiditySensors)/sizeof(humiditySensors[0]));
+  uint8_t avgHumidity = 0;
+  boolean isSoilDry = SoilHumidity_isSoilDry(humiditySensors, sizeof(humiditySensors)/sizeof(humiditySensors[0]), avgHumidity);
+  boolean wateringInPeriod = wateringPeriod && isSoilDry;
 
   // Write all outputs
   writeState(wateringInPeriod || adHocWatering);
   displayState(display, 
                currentTime, 
                wateringInPeriod || adHocWatering, adHocWatering ? adHocRemainingTime : remainingTime,
-               humiditySensors);
+               humiditySensors,
+               avgHumidity);
 
   // Kick the watchdog
   wdt_reset();             
